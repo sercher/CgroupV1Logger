@@ -1,8 +1,8 @@
 # CgroupV1Logger
 
-This tool injects logging into cgroupsv1 initialization.
+This tool injects logging into cgroup V1 initialization process.
 In a customer incident report, an NPE raised occasionally when scaling containerized apps on Cloudfoundry.
-The app was prabably using PlatformMBean to monitor platform information.
+The app was probably using PlatformMBean to monitor platform information.
 The stack trace showed as follows:
 
 ```
@@ -19,10 +19,9 @@ The stack trace showed as follows:
 2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/jdk.internal.platform.cgroupv1.CgroupV1Subsystem.getLongValue(Unknown Source) ~[na:na]
 ```
 
-that led us to a conclusion that the guest platform is using a cgroupv1 env that is in a way misconfigured.
-The issue could be related to https://bugs.openjdk.org/browse/JDK-8286212.
-The tool was developed to dump the cgroupv1 information
-in the target system, to confirm it's the same issue, and that it will be sufficient to apply the same fix for it.
+It looks like the guest platform is using a cgroup V1 environment that is misconfigured, perhaps it is falsely detected as V1 by JDK.
+The similar issue is filed under https://bugs.openjdk.org/browse/JDK-8286212.
+The tool prints the cgroup V1 information to `/dev/stdout`, that can be helpful to confirm it's the same issue, and that it will be sufficient to apply the same fix (as JDK-8286212).
 
 ## Building
 ### Gradle
@@ -35,14 +34,14 @@ This will generate `build/libs/a.jar`
 
 ## Running
 
-Run a self test:
+Run a self test, in which the agent is injected into own process from a forked process:
 ```
 java -jar build/libs/a.jar --self-test
 ```
 
-Produce (re-export SELF) Agent.jar:
+Produce agent.jar (re-export itself from memory):
 ```
-java -jar build/libs/a.jar --agent-jar > a.jar
+java -cp build/libs/a.jar CgroupV1Logger --agent-jar > a.jar
 ```
 
 Dump the current system's cgroupv1 configuration:
@@ -60,12 +59,6 @@ java -javaagent:a.jar -cp .:<YOUR_APP_CLASSPATH> <YOUR_APP_BOOT_CLASS>
 Alternatively, inject an agent into a running JVM process(es) with PID(s):
 ```
 java -jar a.jar <PID> [<PID2> <PID3> ...]
-```
-
-### Testing the agent
-See above the self test mode, in which an agent is injected into SELF from a forked process.
-```
-java -jar a.jar --self-test
 ```
 
 ## Known issues

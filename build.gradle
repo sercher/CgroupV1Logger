@@ -1,0 +1,105 @@
+plugins {
+    id 'java'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+        vendor = JvmVendorSpec.BELLSOFT
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/main/java']
+        }
+    }
+    patched {
+        java {
+            srcDirs = ['src/patched/java']
+        }
+    }
+}
+
+jar {
+    archiveFileName.set('a.jar')
+    manifest {
+        attributes (
+            'Main-Class': 'CgroupV1Logger',
+            'Agent-Class': 'CgroupV1Logger',
+            'Premain-Class': 'CgroupV1Logger',
+            'Can-Redefine-Classes': true,
+            'Can-Retransform-Classes': true
+        )
+    }
+}
+
+compileJava {
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.release = null
+    options.compilerArgs += [
+        '--add-exports', 'java.base/jdk.internal.platform=ALL-UNNAMED',
+        '--add-exports', 'java.base/jdk.internal.platform.cgroupv1=ALL-UNNAMED'
+]
+}
+
+task base64EncodeClass {
+    doLast {
+        // patched class file to be encoded
+        def classFile = file("$buildDir/classes/java/patched/jdk/internal/platform/cgroupv1/CgroupV1SubsystemController.class")
+        if (classFile.exists()) {
+            def classBytes = classFile.bytes
+            def base64Encoded = classBytes.encodeBase64().toString()
+            def encoded = "public class PatchedClass {\n"
+            encoded += "    public static String patchedClass = \""
+            encoded += "${base64Encoded}"
+            encoded += "\";\n}\n"
+            def encodedFile = new File("$buildDir/PatchedClass.java")
+            encodedFile.write(encoded)
+        } else {
+            println "Nothing to encode - patched file not found: ${classFile.path}"
+        }
+    }
+}
+
+base64EncodeClass.dependsOn compilePatchedJava
+
+tasks.named('compilePatchedJava') {
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.release = null
+    source = sourceSets.patched.java
+    classpath = sourceSets.main.runtimeClasspath
+    destinationDir = file("$buildDir/classes/java/patched")
+    options.compilerArgs += [
+        '--add-exports', 'java.base/jdk.internal.platform=ALL-UNNAMED'
+    ]
+}
+
+task compileExtraJava(type: JavaCompile) {
+    description = 'Compile base64 encoded generated source.'
+    source = "$buildDir"
+    classpath = sourceSets.main.output + sourceSets.main.compileClasspath
+    destinationDir = file("$buildDir/classes/java/main")
+}
+
+tasks.named('compileExtraJava') {
+    sourceCompatibility = '8'
+    targetCompatibility = '8'
+    options.release = null
+}
+
+compileExtraJava.dependsOn base64EncodeClass
+jar.dependsOn compileExtraJava
+
+dependencies {
+}
+
+test {
+}

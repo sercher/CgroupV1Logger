@@ -31,7 +31,7 @@ inject the agent into the target JVM process.
 
 ## Building
 ### Gradle
-To build on linux (mac and Windows are not tested)
+To build on linux
 ```
 ./gradlew build
 ```

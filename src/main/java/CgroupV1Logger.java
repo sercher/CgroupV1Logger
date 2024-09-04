@@ -138,7 +138,7 @@ public class CgroupV1Logger {
       System.out.println("Class jdk.internal.platform.cgroupv1.CgroupV1SubsystemController preloaded.");
     } catch (Exception ignore) {
       System.out.println("WARNING: unable to preload the class:");
-      ignore.printStackTrace();
+      ignore.printStackTrace(System.out);
     }
 
     byte[] classFile = Base64.getDecoder().decode(PatchedClass.patchedClass.getBytes());
@@ -233,6 +233,32 @@ public class CgroupV1Logger {
     return baos.toByteArray();
   }
 
+  public static void selfTestNegative() throws Exception {
+    String proc_self_mountinfo =
+        "941 931 0:36 /user.slice/user-1000.slice/session-50.scope /sys/fs/cgroup/memory ro,nosuid,nodev,noexec,relatime - cgroup cgroup rw,seclabel,memory\n";
+    String proc_cgroups =
+        "#subsys_name hierarchy   num_cgroups enabled\n" +
+        "memory  2   90  1\n";
+    String proc_self_cgroup =
+        "9:memory:/user.slice/user-1000.slice/session-3.scope\n";
+
+    String currentDir = System.getProperty("user.dir");
+
+    Path selfCgroups = Paths.get(currentDir, "cgroups_controller");
+    Files.writeString(selfCgroups,proc_cgroups);
+
+    Path selfMountInfo = Paths.get(currentDir, "mount_info");
+    Files.writeString(selfMountInfo,proc_self_mountinfo);
+
+    Path procSelfCgroup = Paths.get(currentDir, "self_cgroups");
+    Files.writeString(procSelfCgroup,proc_self_cgroup);
+
+    String cgroups = selfCgroups.toString();
+    String mountInfo = selfMountInfo.toString();
+    String selfCgroup = procSelfCgroup.toString();
+
+    selfTestWithParams(mountInfo, cgroups, selfCgroup, false);
+  }
   public static void selfTest() throws Exception {
     String currentDir = System.getProperty("user.dir");
 
@@ -255,61 +281,93 @@ public class CgroupV1Logger {
     String mountInfo = cgroupv1MountInfoCgroupsOnlyCPUCtrl.toString();
     String selfCgroup = cgroupv1SelfCgroupsOnlyCPUCtrl.toString();
 
+    selfTestWithParams(mountInfo, cgroups, selfCgroup, true);
+  }
+  private static boolean selfTestFailed = false;
+  public static void selfTestWithParams(String mountInfo, String cgroups, String selfCgroup, boolean isPositive) {
     try {
-      Optional<CgroupTypeResult> result = (Optional<CgroupTypeResult>) Class.forName("jdk.internal.platform.CgroupSubsystemFactory")
-              .getDeclaredMethod("determineType", new Class[]{String.class, String.class, String.class})
-              .invoke(null, new Object[]{mountInfo, cgroups, selfCgroup});
+      Optional<CgroupTypeResult> result = CgroupSubsystemFactory.determineType(mountInfo, cgroups, selfCgroup);
 
       if (!result.isPresent()) {
         System.out.println("CGV1TEST: unable to determine the cgroups interface type");
-        return;
+        selfTestFailed = true;
       }
       CgroupTypeResult res = result.get();
       if (res.isCgroupV2()) {
         System.out.println("CGV1TEST: cgroup V2 unexpected");
-        return;
+        selfTestFailed = true;
       }
       Map<String, CgroupInfo> infos = res.getInfos();
       if (infos.get("memory") != null) {
-        System.out.println("CGV1TEST: memory cgroup unexpected");
-        return;
+        if (isPositive) {
+          System.out.println("CGV1TEST: memory cgroup unexpected");
+          selfTestFailed = true;
+        } else {
+          CgroupInfo memoryInfo = infos.get("memory");
+          if (!"/user.slice/user-1000.slice/session-3.scope".equals(memoryInfo.getCgroupPath())) {
+            System.out.println("CGV1TEST: memory cgroup path is wrong");
+            selfTestFailed = true;
+          }
+          if (!"/sys/fs/cgroup/memory".equals(memoryInfo.getMountPoint())) {
+            System.out.println("CGV1TEST: memory cgroup mount point is wrong");
+            selfTestFailed = true;
+          }
+          Object o = Class.forName("jdk.internal.platform.cgroupv1.CgroupV1SubsystemController")
+                  .getDeclaredConstructor(new Class[]{String.class, String.class})
+                  .newInstance(new Object[]{memoryInfo.getMountRoot(), memoryInfo.getMountPoint()});
+          o.getClass()
+                  .getDeclaredMethod("setPath", new Class[]{String.class})
+                  .invoke(o, new Object[]{memoryInfo.getCgroupPath()});
+          if (o.getClass().getDeclaredMethod("path", new Class[0]).invoke(o) == null) {
+            System.out.println("CGV1TEST: memory cgroup self test passed. JDK version is VULNERABLE");
+          } else {
+            System.out.println("CGV1TEST: memory cgroup self test passed. JDK version is PATCHED");
+          }
+        }
       }
-      if (infos.get("cpu") == null) {
+      if (infos.get("cpu") == null && isPositive) {
         System.out.println("CGV1TEST: cpu must be non-null");
-        return;
+        selfTestFailed = true;
+      }
+      if (infos.get("cpu") != null && !isPositive) {
+        System.out.println("CGV1TEST: cpu is unexpected");
+        selfTestFailed = true;
       }
       CgroupV1Subsystem subsystem = CgroupV1Subsystem.getInstance(infos);
       try {
         long val = subsystem.getMemoryAndSwapLimit();
         if (val != -1) {
           System.out.println("CGV1TEST: expected no limit");
-          return;
+          selfTestFailed = true;
         }
         val = subsystem.getMemoryAndSwapFailCount();
         if (val != -1) {
           System.out.println("CGV1TEST: expected no limit");
-          return;
+          selfTestFailed = true;
         }
         val = subsystem.getMemoryAndSwapMaxUsage();
         if (val != -1) {
           System.out.println("CGV1TEST: expected no limit");
-          return;
+          selfTestFailed = true;
         }
         val = subsystem.getMemoryAndSwapUsage();
         if (val != -1) {
           System.out.println("CGV1TEST: expected no limit");
-          return;
+          selfTestFailed = true;
         }
       } catch (Exception e) {
-        System.out.println("CGV1TEST: exception while reading limits: " + e);
-        return;
+        System.out.println("CGV1TEST: exception while reading limits:");
+        e.printStackTrace(System.out);
+        selfTestFailed = true;
       }
     } catch (Exception e) {
       System.out.println("CGV1TEST: exception determining the cgroup type:");
-      e.printStackTrace();
-      return;
+      e.printStackTrace(System.out);
+      selfTestFailed = true;
     }
-    System.out.println("CGV1TEST: all tests passed.");
+    if (!isPositive && !selfTestFailed) {
+      System.out.println("CGV1TEST: all tests passed.");
+    }
   }
 
   public static void main(String args[]) throws Exception {
@@ -354,6 +412,7 @@ public class CgroupV1Logger {
       output.lines().forEach(System.out::println);
       if(isSelfTest) {
         selfTest();
+        selfTestNegative();
       } else {
         ManagementFactory.getPlatformMBeanServer();
       }

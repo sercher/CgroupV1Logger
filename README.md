@@ -1,27 +1,33 @@
 # CgroupV1Logger
 
-This tool injects logging into cgroup V1 initialization process.
-In a customer incident report, an NPE raised occasionally when scaling containerized apps on Cloudfoundry.
-The app was probably using PlatformMBean to monitor platform information.
-The stack trace showed as follows:
+This tool injects logging into cgroup V1 initialization process in JDK 17+.
+
+An NPE can be raised occasionally when scaling containerized apps on Cloudfoundry.
+The related issue is tracked under https://bugs.openjdk.org/browse/JDK-8286212.
+If the app is using PlatformMBean to monitor platform information, an NPE can be thrown.
+The stack trace may be looking like this:
 
 ```
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT java.lang.NullPointerException: null
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/java.util.Objects.requireNonNull(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/sun.nio.fs.UnixFileSystem.getPath(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/java.nio.file.Path.of(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/java.nio.file.Paths.get(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/jdk.internal.platform.CgroupUtil.lambda$readStringValue$1(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/java.security.AccessController.doPrivileged(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/jdk.internal.platform.CgroupUtil.readStringValue(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/jdk.internal.platform.CgroupSubsystemController.getStringValue(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/jdk.internal.platform.CgroupSubsystemController.getLongValue(Unknown Source) ~[na:na]
-2024-08-08T15:07:30.00+0200 [APP/PROC/WEB/8] OUT at java.base/jdk.internal.platform.cgroupv1.CgroupV1Subsystem.getLongValue(Unknown Source) ~[na:na]
+Exception in thread "main" java.lang.NullPointerException
+         at java.base/java.util.Objects.requireNonNull(Objects.java:208)
+         at java.base/sun.nio.fs.UnixFileSystem.getPath(UnixFileSystem.java:263)
+         at java.base/java.nio.file.Path.of(Path.java:147)
+         at java.base/java.nio.file.Paths.get(Paths.java:69)
+         at java.base/jdk.internal.platform.CgroupUtil.lambda$readStringValue$1(CgroupUtil.java:67)
+         at java.base/java.security.AccessController.doPrivileged(AccessController.java:569)
+         at java.base/jdk.internal.platform.CgroupUtil.readStringValue(CgroupUtil.java:69)
+         at java.base/jdk.internal.platform.CgroupSubsystemController.getStringValue(CgroupSubsystemController.java:65)
+         at java.base/jdk.internal.platform.CgroupSubsystemController.getLongValue(CgroupSubsystemController.java:124)
+         at java.base/jdk.internal.platform.cgroupv1.CgroupV1Subsystem.getLongValue(CgroupV1Subsystem.java:175)
+         at java.base/jdk.internal.platform.cgroupv1.CgroupV1Subsystem.getHierarchical(CgroupV1Subsystem.java:149)
+         at java.base/jdk.internal.platform.cgroupv1.CgroupV1Subsystem.initSubSystem(CgroupV1Subsystem.java:84)
+         at java.base/jdk.internal.platform.cgroupv1.CgroupV1Subsystem.getInstance(CgroupV1Subsystem.java:60)
 ```
 
-It looks like the guest platform is using a cgroup V1 environment that is misconfigured, perhaps it is falsely detected as V1 by JDK.
-The similar issue is filed under https://bugs.openjdk.org/browse/JDK-8286212.
-The tool prints the cgroup V1 information to `/dev/stdout`, that can be helpful to confirm it's the same issue, and that it will be sufficient to apply the same fix (as JDK-8286212).
+The tool prints the cgroup V1 information to `/dev/stdout` as it's processed by JDK, that can be helpful to verify
+the issue and to develop the fix. The tool should be run in the target environment (e.g. container). It works in
+multiple modes, such as a standalone app (`-jar agent.jar`), a `-javaagent` together with the target app, or it can
+inject the agent into the target JVM process.
 
 ## Building
 ### Gradle
@@ -30,9 +36,9 @@ To build on linux (mac and Windows are not tested)
 ./gradlew build
 ```
 
-This will generate `build/libs/a.jar`
+This will generate `build/libs/a.jar`, that can be used in deployments.
 
-## Running
+### Optional
 
 Run a self test, in which the agent is injected into own process from a forked process:
 ```
@@ -41,22 +47,29 @@ java -jar build/libs/a.jar --self-test
 
 Produce agent.jar (re-export itself from memory):
 ```
-java -cp build/libs/a.jar CgroupV1Logger --agent-jar > a.jar
+java -jar build/libs/a.jar --agent-jar > a.jar
 ```
+
+Get help:
+```
+java -jar a.jar --help
+```
+
+## Running
 
 Dump the current system's cgroupv1 configuration:
 ```
 java -jar a.jar
 ```
 
-### Running the static agent
+### Running the agent
 
-Run diagnostic agent with any app:
+Run in `-javaagent` mode with any app:
 ```
-java -javaagent:a.jar -cp .:<YOUR_APP_CLASSPATH> <YOUR_APP_BOOT_CLASS>
+java -javaagent:a.jar -cp <YOUR_APP_CLASSPATH> <YOUR_APP_BOOT_CLASS>
 ```
 
-Alternatively, inject an agent into a running JVM process(es) with PID(s):
+Inject Java-agent into JVM process(es) with PID(s):
 ```
 java -jar a.jar <PID> [<PID2> <PID3> ...]
 ```
@@ -91,7 +104,7 @@ java.security.AccessControlException: access denied ("java.lang.RuntimePermissio
         at java.base/java.lang.Class.forName(Class.java:375)
         at CgroupV1Logger.agentmain(CgroupV1Logger.java:137)
 ```
-or even
+or even like this (less obvious)
 ```
 Exception in thread "main" java.lang.ClassCircularityError: java/lang/Module$ReflectionData
         at java.base/java.lang.Module.isReflectivelyExportedOrOpen(Module.java:688)

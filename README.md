@@ -90,6 +90,19 @@ Exception in thread "main" java.lang.UnsupportedClassVersionError: CgroupV1Logge
 ```
 Make sure you are running at least Java 17.
 
+If you run the agent on Windows, you'll see the following message:
+
+```
+WARNING: unable to preload the class:
+java.lang.ClassNotFoundException: jdk.internal.platform.cgroupv1.CgroupV1SubsystemController
+        at java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:641)
+        at java.base/jdk.internal.loader.ClassLoaders$AppClassLoader.loadClass(ClassLoaders.java:188)
+        at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:525)
+        at java.base/java.lang.Class.forName0(Native Method)
+        at java.base/java.lang.Class.forName(Class.java:375)
+        at CgroupV1Logger.agentmain(CgroupV1Logger.java:137)
+```
+that's because Windows doesn't support cgroups.
 
 In the case when the security manager is enabled in the target app, you will see an error like this:
 ```
